@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大南学園 九九ランダム検定</title>
+<style>
+:root{font-family:"Yu Gothic UI","Meiryo",sans-serif;color:#17233b;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px}
+main{width:min(760px,100%);background:white;border-radius:24px;padding:clamp(22px,5vw,44px);box-shadow:0 12px 40px #1d355715;text-align:center}
+h1{font-size:clamp(24px,4vw,36px);margin:0 0 8px;color:#17345d}
+.sub{color:#63728a;margin-bottom:24px}.panel{background:#f4f7fc;border-radius:20px;padding:26px 16px;margin:18px 0}
+#question{font-size:clamp(46px,10vw,78px);font-weight:800;letter-spacing:.04em;color:#183b69;min-height:1.3em}
+#message{font-size:clamp(22px,4vw,32px);font-weight:800;min-height:1.4em;margin:12px 0}
+#detail{color:#66758b;min-height:1.5em}
+button{border:0;border-radius:999px;padding:15px 30px;font-size:18px;font-weight:700;cursor:pointer;background:#173f70;color:white}
+button:disabled{opacity:.45;cursor:default}.secondary{background:#e8eef7;color:#17345d;margin-left:8px}
+#start{font-size:22px;padding:17px 48px}.count{font-size:72px;font-weight:800;color:#c18a25}
+.small{font-size:14px;color:#718096;line-height:1.7;margin-top:22px}
+.hidden{display:none}.good{color:#17834c}.bad{color:#d04a45}
+.progress{font-weight:700;color:#6b7890;margin-bottom:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>大南学園 算数検定シリーズ</h1>
+<div class="sub">九九ランダム検定</div>
+<section id="intro">
+<p>3・4・6・7・8の段からランダムに10問出題します。声に出して答えよう！</p>
+<button id="start">スタート！</button>
+</section>
+<section id="game" class="hidden">
+<div class="progress" id="progress">第1問 / 10問</div>
+<div class="panel">
+<div id="countdown" class="count"></div>
+<div id="question"></div>
+<div id="message" aria-live="polite"></div>
+<div id="detail"></div>
+</div>
+<button id="repeat" class="secondary">もう一度聞く</button>
+</section>
+<section id="result" class="hidden">
+<div id="resultTitle" style="font-size:42px;font-weight:900;margin:12px"></div>
+<div id="resultText" style="font-size:22px;line-height:1.6"></div>
+<button id="again" style="margin-top:24px">もう一度チャレンジ</button>
+</section>
+<div class="small">※マイクの使用を許可してください。ChromeまたはEdge推奨。音声認識にはインターネット接続が必要な場合があります。</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+let questions=[],index=0,score=0,recognition=null,recognizing=false,advanceTimer=null,listenTimer=null,runToken=0;
+function soundCorrect(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const now=ctx.currentTime;
+    // 明るく短い「ピン・ポン♪」の2音チャイム
+    [[784,0,0.19],[1175,0.20,0.34]].forEach(([freq,delay,duration])=>{
+      const osc=ctx.createOscillator(), gain=ctx.createGain();
+      osc.type="sine"; osc.frequency.setValueAtTime(freq,now+delay);
+      gain.gain.setValueAtTime(0.0001,now+delay);
+      gain.gain.exponentialRampToValueAtTime(0.22,now+delay+0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001,now+delay+duration);
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.start(now+delay);osc.stop(now+delay+duration+0.02);
+    });
+    setTimeout(()=>ctx.close(),900);
+  }catch(e){}
+}
+function soundWrong(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.type="sine";o.frequency.value=220;g.gain.value=.12;o.connect(g);g.connect(ctx.destination);
+    o.start();g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.22);o.stop(ctx.currentTime+.23);
+    setTimeout(()=>ctx.close(),400);
+  }catch(e){}
+}
+function normalize(s){
+  return s.toLowerCase().replace(/[、。，．・\s]/g,"").replace(/×|x|かける/g,"").replace(/＝|は/g,"");
+}
+const numberWords={
+"れい":0,"ぜろ":0,"いち":1,"に":2,"さん":3,"し":4,"よん":4,"ご":5,"ろく":6,"しち":7,"なな":7,"はち":8,"く":9,"きゅう":9,"じゅう":10,
+"じゅういち":11,"じゅうに":12,"じゅうさん":13,"じゅうよん":14,"じゅうご":15,"じゅうろく":16,"じゅうしち":17,"じゅうはち":18,"じゅうきゅう":19,
+"にじゅう":20,"にじゅういち":21,"にじゅうに":22,"にじゅうよん":24,"にじゅうはち":28,
+"さんじゅう":30,"さんじゅうろく":36,"さんじゅうに":32,"さんじゅうご":35,"さんじゅうはち":38,
+"よんじゅう":40,"よんじゅうはち":48,"よんじゅうに":42,"よんじゅうご":45,
+"ごじゅう":50,"ごじゅうろく":56,"ごじゅうに":52,"ごじゅうよん":54,
+"ろくじゅう":60,"ろくじゅうさん":63,"ろくじゅうはち":68,"ろくじゅうに":62,
+"ななじゅう":70,"ななじゅうに":72,"ななじゅうろく":76,"ななじゅうご":75,
+"はちじゅう":80,"はちじゅういち":81
+};
+function answerMatches(transcript,answer){
+  const s=normalize(transcript);
+  if(s.includes(String(answer))) return true;
+  for(const [word,num] of Object.entries(numberWords)) if(num===answer && s.includes(word)) return true;
+  return false;
+}
+function makeQuestions(){
+  const tables=[3,4,6,7,8];
+  questions=Array.from({length:10},()=>{const a=tables[Math.floor(Math.random()*tables.length)],b=1+Math.floor(Math.random()*9);return {a,b,answer:a*b}});
+}
+function stopRecognition(){
+  clearTimeout(listenTimer);
+  if(recognition){try{recognition.onend=null;recognition.stop()}catch(e){}}
+  recognition=null;recognizing=false;
+}
+function showQuestion(){
+  const token=++runToken;
+  stopRecognition();clearTimeout(advanceTimer);
+  if(index>=10){finish();return}
+  const q=questions[index];
+  $("progress").textContent=`第${index+1}問 / 10問`;
+  $("question").textContent=`${q.a} × ${q.b} = ?`;
+  $("message").textContent="声に出して答えよう！";$("message").className="";
+  $("detail").textContent="マイクに向かって答えてね";
+  listenTimer=setTimeout(()=>startListening(token),250);
+}
+function startListening(token){
+  if(!SpeechRecognition){$("detail").textContent="このブラウザは音声認識に対応していません。ChromeまたはEdgeで開いてください。";return}
+  recognition=new SpeechRecognition();
+  recognition.lang="ja-JP";recognition.continuous=true;recognition.interimResults=true;recognition.maxAlternatives=5;
+  recognition.onstart=()=>{recognizing=true;$("detail").textContent="聞いているよ…"};
+  recognition.onresult=e=>{
+    if(token!==runToken)return;
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i];
+      for(let j=0;j<r.length;j++){
+        if(answerMatches(r[j].transcript,questions[index].answer)){markAnswer(true,r[j].transcript);return}
+      }
+    }
+  };
+  recognition.onerror=e=>{
+    if(token!==runToken)return;
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){$("detail").textContent="マイクが許可されていません。ブラウザのサイト設定を確認してください。"}
+  };
+  recognition.onend=()=>{recognizing=false};
+  try{recognition.start()}catch(e){}
+  listenTimer=setTimeout(()=>{if(token===runToken && $("message").textContent==="声に出して答えよう！")markAnswer(false,"時間切れ")},7000);
+}
+function markAnswer(correct,heard){
+  if($("message").textContent!=="声に出して答えよう！")return;
+  stopRecognition();
+  if(correct){score++;$("message").textContent="ピンポン♪ 正解！";$("message").className="good";$("detail").textContent=`「${heard}」と聞こえたよ`;soundCorrect();}
+  else{$("message").textContent="おしい！";$("message").className="bad";$("detail").textContent=`正解は ${questions[index].answer} だよ`;soundWrong();}
+  advanceTimer=setTimeout(()=>{index++;showQuestion()},1500);
+}
+function finish(){
+  stopRecognition();$("game").classList.add("hidden");$("result").classList.remove("hidden");
+  if(score===10){$("resultTitle").textContent="🌸 花丸！ 合格！ 🌸";$("resultTitle").style.color="#bd8a28";$("resultText").textContent="10問ぜんぶ正解！すばらしい！";}
+  else{$("resultTitle").textContent="チャレンジ終了";$("resultTitle").style.color="#17345d";$("resultText").textContent=`正解は ${score} / 10 問！\nよくがんばったね。次はもっとできるよ！`;}
+}
+function start(){
+  clearTimeout(advanceTimer);stopRecognition();score=0;index=0;makeQuestions();
+  $("intro").classList.add("hidden");$("result").classList.add("hidden");$("game").classList.remove("hidden");
+  $("question").textContent="";$("message").textContent="";
+  let n=3;$("countdown").textContent=n;
+  const tick=()=>{n--;if(n>0){$("countdown").textContent=n;setTimeout(tick,1000)}else{$("countdown").textContent="スタート！";setTimeout(()=>{$("countdown").textContent="";showQuestion()},450)}};
+  setTimeout(tick,1000);
+}
+$("start").addEventListener("click",start);
+$("again").addEventListener("click",()=>{$("result").classList.add("hidden");$("intro").classList.remove("hidden")});
+$("repeat").addEventListener("click",()=>{if(index<10){stopRecognition();$("message").textContent="声に出して答えよう！";$("message").className="";startListening(runToken)}});
+</script>
+</body>
+</html>
